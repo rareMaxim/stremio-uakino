@@ -272,7 +272,6 @@ async function startAddon() {
 
     serveHTTP(builder.getInterface(), {
         port: PORT,
-        static: '/public',
         cors: {
             origin: '*'
         }
