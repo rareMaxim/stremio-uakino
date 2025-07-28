@@ -7,6 +7,39 @@ const UAKINO_BASE_URL = 'https://uakino.best';
 const CACHE_FILE_PATH = './genre_cache.json';
 const CACHE_DURATION_MS = 7 * 24 * 60 * 60 * 1000; // 7 днів
 
+// --- Функція парсингу списку елементів ---
+// Ми винесли логіку парсингу в окрему функцію, щоб не дублювати її
+function parseItemsFromPage($) {
+    const metas = [];
+    $('div.movie-item').each((index, element) => {
+        const titleElement = $(element).find('a.movie-title');
+        const title = titleElement.text().trim();
+        if (title) {
+            const pageUrl = titleElement.attr('href');
+            let posterUrl = $(element).find('img').attr('src');
+            const description = $(element).find('.movie-text .desc-about-text, .movie-desc').text().trim();
+            const year = $(element).find('.movie-desk-item:contains("Рік виходу:"), .fi-label:contains("Рік виходу:")').next().text().trim();
+            const imdbRating = $(element).find('.movie-desk-item:contains("IMDB:"), .fi-label:contains("IMDB:")').next().text().trim() || null;
+            const seasonInfo = $(element).find('.full-season').text().trim();
+            const finalName = seasonInfo ? `${title} (${seasonInfo})` : title;
+
+            if (pageUrl && posterUrl) {
+                if (posterUrl.startsWith('/')) { posterUrl = UAKINO_BASE_URL + posterUrl; }
+                const isSeries = /сезон/i.test(title) || pageUrl.includes('/series/') || pageUrl.includes('/cartoon/cartoonseries/') || pageUrl.includes('/animeukr/');
+                const itemType = isSeries ? 'series' : 'movie';
+                const fullPath = new URL(pageUrl, UAKINO_BASE_URL).pathname.substring(1);
+                const itemId = `uakino:${itemType}:${encodeURIComponent(fullPath)}`;
+                
+                metas.push({
+                    id: itemId, type: itemType, name: finalName, poster: posterUrl,
+                    description, releaseInfo: year, imdbRating
+                });
+            }
+        }
+    });
+    return metas;
+}
+
 async function parseGenres(url) {
     try {
         const response = await axios.get(url, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36' } });
@@ -55,8 +88,8 @@ async function startAddon() {
         types: ['movie', 'series'],
         catalogs: [
             { id: 'uakino-premieres', type: 'movie', name: 'Новинки прокату (uakino)' },
-            { id: 'uakino-movies', type: 'movie', name: 'Фільми (uakino)', extra: [{ name: 'genre', options: Object.keys(movieGenres), isRequired: false }] },
-            { id: 'uakino-series', type: 'series', name: 'Серіали (uakino)', extra: [{ name: 'genre', options: Object.keys(seriesGenres), isRequired: false }] }
+            { id: 'uakino-movies', type: 'movie', name: 'Фільми (uakino)', extra: [{ name: 'genre', options: Object.keys(movieGenres) }, { name: 'search', isRequired: false }] },
+            { id: 'uakino-series', type: 'series', name: 'Серіали (uakino)', extra: [{ name: 'genre', options: Object.keys(seriesGenres) }, { name: 'search', isRequired: false }] }
         ],
         resources: ['catalog', 'meta', 'stream']
     };
@@ -76,7 +109,24 @@ async function startAddon() {
 
     builder.defineCatalogHandler(async (args) => {
         const { type, id, extra } = args;
+        const searchQuery = extra ? extra.search : null;
         const selectedGenre = extra ? extra.genre : null;
+        
+        let metas = [];
+
+        try {
+            if (searchQuery) {
+                console.log(`[CATALOG] Пошуковий запит: '${searchQuery}'`);
+                const searchUrl = `${UAKINO_BASE_URL}/index.php?do=search`;
+                const params = new URLSearchParams();
+                params.append('do', 'search');
+                params.append('subaction', 'search');
+                params.append('story', searchQuery);
+                
+                const response = await axios.post(searchUrl, params, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36' } });
+                const $ = cheerio.load(response.data);
+                metas = parseItemsFromPage($);
+            } else {
         let targetUrl;
         let selector;
         if (id === 'uakino-premieres') {
@@ -90,29 +140,12 @@ async function startAddon() {
             targetUrl = type === 'movie' ? `${UAKINO_BASE_URL}/filmy/` : `${UAKINO_BASE_URL}/seriesss/`;
             selector = 'div.movie-item';
         }
-        const metas = [];
-        try {
+                
+                console.log(`[CATALOG] Запит на каталог: '${id}', Цільовий URL: ${targetUrl}`);
             const response = await axios.get(targetUrl, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36' } });
             const $ = cheerio.load(response.data);
-            $(selector).each((index, element) => {
-                const titleElement = $(element).find('a.movie-title');
-                const title = titleElement.text().trim();
-                if (title) {
-                    const pageUrl = titleElement.attr('href');
-                    let posterUrl = $(element).find('img').attr('src');
-                    const description = $(element).find('.movie-text .desc-about-text, .movie-desc').text().trim();
-                    const year = $(element).find('.movie-desk-item:contains("Рік виходу:"), .fi-label:contains("Рік виходу:")').next().text().trim();
-                    const imdbRating = $(element).find('.movie-desk-item:contains("IMDB:"), .fi-label:contains("IMDB:")').next().text().trim() || null;
-                    const seasonInfo = $(element).find('.full-season').text().trim();
-                    const finalName = seasonInfo ? `${title} (${seasonInfo})` : title;
-                    if (posterUrl && posterUrl.startsWith('/')) { posterUrl = UAKINO_BASE_URL + posterUrl; }
-                    const isSeries = /сезон/i.test(title) || (pageUrl && (pageUrl.includes('/series/') || pageUrl.includes('/cartoon/cartoonseries/') || pageUrl.includes('/animeukr/')));
-                    const itemType = isSeries ? 'series' : 'movie';
-                    const fullPath = new URL(pageUrl, UAKINO_BASE_URL).pathname.substring(1);
-                    const itemId = `uakino:${itemType}:${encodeURIComponent(fullPath)}`;
-                    metas.push({ id: itemId, type: itemType, name: finalName, poster: posterUrl, description, releaseInfo: year, imdbRating });
+                metas = parseItemsFromPage($, selector);
                 }
-            });
         } catch (error) { console.error(`[CATALOG] Помилка: ${error.message}`); }
         return Promise.resolve({ metas });
     });
@@ -167,6 +200,8 @@ async function startAddon() {
                         }
                     }
                 });
+            } else {
+                meta.videos.push({ id: args.id, title: name, released: new Date() });
             }
             // --- ВИДАЛЕНО ЗАЙВИЙ КРОК ДЛЯ ФІЛЬМІВ ---
             // Stremio сам зрозуміє, що для фільму треба шукати стріми, 
@@ -255,10 +290,7 @@ async function startAddon() {
                         }
                     } catch (e) { /* Ігноруємо помилки для окремих плеєрів */ }
                 }
-
-                if (streams.length > 0) {
-                    return Promise.resolve({ streams });
-                }
+                if (streams.length > 0) return Promise.resolve({ streams });
             }
 
             return Promise.resolve({ streams: [] });
@@ -269,13 +301,7 @@ async function startAddon() {
     });
 
     const PORT = 3000;
-
-    serveHTTP(builder.getInterface(), {
-        port: PORT,
-        cors: {
-            origin: '*'
-        }
-    });
+    serveHTTP(builder.getInterface(), { port: PORT });
     console.log(`\n✅ Додаток запущено! Встановіть його у Stremio за цим посиланням:\nhttp://127.0.0.1:${PORT}/manifest.json`);
 }
 
