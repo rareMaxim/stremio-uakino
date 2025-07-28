@@ -45,7 +45,7 @@ async function loadGenresWithCache() {
 
 async function startAddon() {
     const { movieGenres, seriesGenres } = await loadGenresWithCache();
-    
+
     const manifest = {
         id: 'org.uakino.best.final.ui.fix',
         version: '5.5.0',
@@ -116,7 +116,7 @@ async function startAddon() {
         } catch (error) { console.error(`[CATALOG] Помилка: ${error.message}`); }
         return Promise.resolve({ metas });
     });
-    
+
     builder.defineMetaHandler(async (args) => {
         const { type, pageUrl } = buildCorrectUrl(args.id);
         if (!pageUrl) return Promise.resolve({ meta: {} });
@@ -137,9 +137,9 @@ async function startAddon() {
             const runtime = $('.fi-item:contains("Тривалість:") .fi-desc').text().trim();
             const imdbRating = $('.fi-item:contains("IMDB:") .fi-desc').text().trim().split('/')[0];
             const trailerDataSrc = $(`li:contains("Трейлер")`).parent().next('.box').find('iframe').attr('data-src');
-            
+
             const meta = { id: args.id, type, name, poster, description, background, genres, director, cast, country, runtime, imdbRating, videos: [] };
-            
+
             if (trailerDataSrc && trailerDataSrc.includes('youtube.com')) {
                 try {
                     // Extract YouTube video ID for the trailer
@@ -156,7 +156,7 @@ async function startAddon() {
                         const seasonText = $(element).text().trim();
                         const seasonMatch = seasonText.match(/(\d+)\s*Сезон/i);
                         if (seasonMatch) { currentSeason = parseInt(seasonMatch[1], 10); }
-                    } 
+                    }
                     else if ($(element).attr('data-file')) {
                         const episodeTitle = $(element).text().trim();
                         const episodeMatch = episodeTitle.match(/(\d+)\s*серія/i);
@@ -167,11 +167,11 @@ async function startAddon() {
                         }
                     }
                 });
-            } 
+            }
             // --- ВИДАЛЕНО ЗАЙВИЙ КРОК ДЛЯ ФІЛЬМІВ ---
             // Stremio сам зрозуміє, що для фільму треба шукати стріми, 
             // якщо масив videos залишиться порожнім. Це прибере проміжний крок.
-            
+
             return Promise.resolve({ meta });
         } catch (error) {
             console.error(`[META] Помилка для ${pageUrl}: ${error.message}`);
@@ -185,7 +185,7 @@ async function startAddon() {
             const newsIdMatch = pageUrl.match(/(\d+)-/);
             if (!newsIdMatch) throw new Error(`Не вдалося знайти ID новини в: ${pageUrl}`);
             const newsId = newsIdMatch[1];
-            
+
             const pageResponse = await axios.get(pageUrl, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36' } });
             const $page = cheerio.load(pageResponse.data);
             let dleEditTime = null;
@@ -198,7 +198,7 @@ async function startAddon() {
 
             const playlistUrl = `${UAKINO_BASE_URL}/engine/ajax/playlists.php?news_id=${newsId}&xfield=playlist&time=${dleEditTime}`;
             const response = await axios.get(playlistUrl, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36', 'Referer': pageUrl, 'X-Requested-With': 'XMLHttpRequest' } });
-            
+
             const playlistHtml = response.data.response;
             if (playlistHtml && typeof playlistHtml === 'string') {
                 const $ = cheerio.load(playlistHtml);
@@ -242,7 +242,7 @@ async function startAddon() {
                                             else if (qualityUrl.includes('/720/')) qualityLabel = '720p';
                                             else if (qualityUrl.includes('/480/')) qualityLabel = '480p';
                                         }
-                                        
+
                                         streams.push({
                                             name: `UAKINO - ${player.title}`,
                                             title: `▶️ ${qualityLabel}`,
@@ -260,7 +260,7 @@ async function startAddon() {
                     return Promise.resolve({ streams });
                 }
             }
-            
+
             return Promise.resolve({ streams: [] });
         } catch (error) {
             console.error(`[STREAM] Помилка: ${error.message}`);
@@ -269,7 +269,14 @@ async function startAddon() {
     });
 
     const PORT = 3000;
-    serveHTTP(builder.getInterface(), { port: PORT });
+
+    serveHTTP(builder.getInterface(), {
+        port: PORT,
+        static: '/public',
+        cors: {
+            origin: '*'
+        }
+    });
     console.log(`\n✅ Додаток запущено! Встановіть його у Stremio за цим посиланням:\nhttp://127.0.0.1:${PORT}/manifest.json`);
 }
 
