@@ -29,7 +29,7 @@ function parseItemsFromPage($) {
                 const itemType = isSeries ? 'series' : 'movie';
                 const fullPath = new URL(pageUrl, UAKINO_BASE_URL).pathname.substring(1);
                 const itemId = `uakino:${itemType}:${encodeURIComponent(fullPath)}`;
-                
+
                 metas.push({
                     id: itemId, type: itemType, name: finalName, poster: posterUrl,
                     description, releaseInfo: year, imdbRating
@@ -111,7 +111,7 @@ async function startAddon() {
         const { type, id, extra } = args;
         const searchQuery = extra ? extra.search : null;
         const selectedGenre = extra ? extra.genre : null;
-        
+
         let metas = [];
 
         try {
@@ -122,30 +122,30 @@ async function startAddon() {
                 params.append('do', 'search');
                 params.append('subaction', 'search');
                 params.append('story', searchQuery);
-                
+
                 const response = await axios.post(searchUrl, params, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36' } });
                 const $ = cheerio.load(response.data);
                 metas = parseItemsFromPage($);
             } else {
-        let targetUrl;
-        let selector;
-        if (id === 'uakino-premieres') {
-            targetUrl = UAKINO_BASE_URL;
-            selector = '.top-header .swiper-slide.movie-item';
-        } else if (selectedGenre) {
-            const genreId = (type === 'movie' ? movieGenres : seriesGenres)[selectedGenre];
-            targetUrl = `${UAKINO_BASE_URL}/f/o.cat=${genreId}/`;
-            selector = 'div.movie-item';
-        } else {
-            targetUrl = type === 'movie' ? `${UAKINO_BASE_URL}/filmy/` : `${UAKINO_BASE_URL}/seriesss/`;
-            selector = 'div.movie-item';
-        }
-                
-                console.log(`[CATALOG] Запит на каталог: '${id}', Цільовий URL: ${targetUrl}`);
-            const response = await axios.get(targetUrl, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36' } });
-            const $ = cheerio.load(response.data);
-                metas = parseItemsFromPage($, selector);
+                let targetUrl;
+                let selector;
+                if (id === 'uakino-premieres') {
+                    targetUrl = UAKINO_BASE_URL;
+                    selector = '.top-header .swiper-slide.movie-item';
+                } else if (selectedGenre) {
+                    const genreId = (type === 'movie' ? movieGenres : seriesGenres)[selectedGenre];
+                    targetUrl = `${UAKINO_BASE_URL}/f/o.cat=${genreId}/`;
+                    selector = 'div.movie-item';
+                } else {
+                    targetUrl = type === 'movie' ? `${UAKINO_BASE_URL}/filmy/` : `${UAKINO_BASE_URL}/seriesss/`;
+                    selector = 'div.movie-item';
                 }
+
+                console.log(`[CATALOG] Запит на каталог: '${id}', Цільовий URL: ${targetUrl}`);
+                const response = await axios.get(targetUrl, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36' } });
+                const $ = cheerio.load(response.data);
+                metas = parseItemsFromPage($, selector);
+            }
         } catch (error) { console.error(`[CATALOG] Помилка: ${error.message}`); }
         return Promise.resolve({ metas });
     });
@@ -175,7 +175,6 @@ async function startAddon() {
 
             if (trailerDataSrc && trailerDataSrc.includes('youtube.com')) {
                 try {
-                    // Extract YouTube video ID for the trailer
                     const trailerUrl = new URL(trailerDataSrc);
                     const videoId = trailerUrl.searchParams.get('v') || trailerUrl.pathname.split('/').pop();
                     if (videoId) meta.trailer = `yt_id:${videoId}`;
@@ -201,11 +200,9 @@ async function startAddon() {
                     }
                 });
             } else {
+                // --- ПОВЕРТАЄМО НАЗВУ ДЛЯ ФІЛЬМІВ ---
                 meta.videos.push({ id: args.id, title: name, released: new Date() });
             }
-            // --- ВИДАЛЕНО ЗАЙВИЙ КРОК ДЛЯ ФІЛЬМІВ ---
-            // Stremio сам зрозуміє, що для фільму треба шукати стріми, 
-            // якщо масив videos залишиться порожнім. Це прибере проміжний крок.
 
             return Promise.resolve({ meta });
         } catch (error) {
