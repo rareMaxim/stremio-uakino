@@ -47,11 +47,11 @@ async function startAddon() {
     const { movieGenres, seriesGenres } = await loadGenresWithCache();
 
     const manifest = {
-        id: 'org.uakino.best.production',
-        version: '6.0.1-logging', // Оновимо версію для ясності
-        name: 'uakino.best (Logging)',
-        description: 'Повнофункціональний додаток для uakino.best з увімкненим логуванням.',
-        logo: `${UAKINO_BASE_URL}/templates/uakino/images/logo.svg`,
+        id: 'best.uakino',
+        version: '6.0.1',
+        name: 'uakino.best',
+        description: 'Повнофункціональний додаток для uakino.best',
+        logo: `${UAKINO_BASE_URL}/templates/uakino/images/icons/android-icon-192x192.png`,
         types: ['movie', 'series'],
         catalogs: [
             { id: 'uakino-premieres', type: 'movie', name: 'Новинки прокату (uakino)' },
