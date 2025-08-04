@@ -220,7 +220,7 @@ async function startAddon() {
                 const response = await axios.get(targetUrl, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36' } });
                 const $ = cheerio.load(response.data);
                 metas = parseAndCategorizeItems($)[type];
-                console.log(`[CATALOG] Знайдено ${metas.length} елементів для типу: ${type}`);
+                // console.log(`[CATALOG] Знайдено ${metas.length} елементів для типу: ${type}`);
             }
         } catch (error) {
             console.error(`[CATALOG] Помилка: ${error.message}`);
