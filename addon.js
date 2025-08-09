@@ -99,10 +99,15 @@ async function startAddon() {
     const buildCorrectUrl = (argsId) => {
         const parts = argsId.split(':');
         const type = parts[1];
+        // Тепер третя частина ID - це закодований шлях
         const encodedPath = parts[2];
         if (!encodedPath) return { type: null, pageUrl: null };
+
+        // Просто розкодовуємо шлях
         let fullPath = decodeURIComponent(encodedPath);
-        fullPath = fullPath.replace(/_/g, '-');
+        // Прибираємо зайву заміну, яка могла псувати шлях
+        // fullPath = fullPath.replace(/_/g, '-'); 
+
         const pageUrl = `${UAKINO_BASE_URL}/${fullPath}`;
         return { type, pageUrl };
     };
@@ -184,17 +189,31 @@ async function startAddon() {
                     // На сторінці пошуку селектор завжди однаковий
                     const parsedData = parseAndCategorizeItems($, 'div.movie-item');
 
+                    const groupedSeries = {};
+                    for (const seriesItem of parsedData.series) {
+                        // Створюємо базову назву, прибравши номер сезону
+                        const baseName = seriesItem.name.replace(/\s*\(\d+\s*сезон\)|(\s*\d+\s*сезон)/i, '').trim();
+                        // Якщо ми ще не бачили цей серіал, додаємо його. Беремо перший зустрічний.
+                        if (!groupedSeries[baseName]) {
+                            seriesItem.name = baseName; // Очищуємо назву від сезону
+                            groupedSeries[baseName] = seriesItem;
+                        }
+                    }
+                    // Замінюємо список серіалів на згрупований
+                    parsedData.series = Object.values(groupedSeries);
+                    console.log(`[GROUPING] Після групування залишилось ${parsedData.series.length} унікальних серіалів.`);
+
                     categorizedResults = { ...parsedData, timestamp: Date.now() };
                     searchCache.set(cacheKey, categorizedResults);
                     console.log(`[CACHED] Збережено результати для "${cacheKey}"`);
                 }
 
+                // ... (вибір metas movie/series залишається без змін)
                 if (type === 'movie') {
                     metas = categorizedResults.movies;
                 } else if (type === 'series') {
                     metas = categorizedResults.series;
                 }
-                console.log(metas);
             } else {
                 // --- ТУТ ЗМІННА selector ТЕПЕР ВИКОРИСТОВУЄТЬСЯ ---
                 let targetUrl, selector;
@@ -233,109 +252,122 @@ async function startAddon() {
     });
 
     builder.defineMetaHandler(async (args) => {
-        const { type, pageUrl } = buildCorrectUrl(args.id);
+        const { pageUrl } = buildCorrectUrl(args.id);
         if (!pageUrl) return Promise.resolve({ meta: {} });
-        try {
-            const response = await axios.get(pageUrl, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36' } });
-            const $ = cheerio.load(response.data);
 
-            // --- Основна логіка парсингу метаданих (залишається без змін) ---
-            const getTextFromLinks = (selector) => $(selector).map((i, el) => $(el).text().trim()).get();
+        console.log(`[META] Запит на повні метадані для серіалу. Початковий URL: ${pageUrl}`);
+
+        try {
+            const initialResponse = await axios.get(pageUrl, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36' } });
+            const $ = cheerio.load(initialResponse.data);
+
             const nameWithSeason = $('h1[itemprop="name"]').text().trim() || $('h1 span.solototle').text().trim();
-            // Прибираємо номер сезону з назви, щоб назва серіалу була однаковою
             const name = nameWithSeason.replace(/\s*\d+\s*сезон/i, '').trim();
             const posterSrc = $('div.film-poster img').attr('src');
             const poster = posterSrc ? UAKINO_BASE_URL + posterSrc : '';
             const description = $('.full-text.clearfix[itemprop="description"]').text().trim();
             const backgroundSrc = $('meta[property="og:image"]').attr('content');
             const background = backgroundSrc ? (backgroundSrc.startsWith('http') ? backgroundSrc : UAKINO_BASE_URL + backgroundSrc) : null;
-            const genres = getTextFromLinks('.fi-item:contains("Жанр:") a, .fi-item-s:contains("Жанр:") a');
-            const director = getTextFromLinks('.fi-item:contains("Режисер:") a, .fi-item-s:contains("Режисер:") a');
-            const cast = getTextFromLinks('.fi-item:contains("Актори:") a, .fi-item-s:contains("Актори:") a');
-            const country = getTextFromLinks('.fi-item:contains("Країна:") a, .fi-item-s:contains("Країна:") a').join(', ');
-            const runtime = $('.fi-item:contains("Тривалість:") .fi-desc, .fi-item-s:contains("Тривалість:") .fi-desc').text().trim();
-            const imdbRating = $('.fi-item:contains("IMDB:") .fi-desc, .fi-item-s:contains("IMDB:") .fi-desc').text().trim().split('/')[0];
+            const meta = { id: args.id, type: 'series', name, poster, background, description, videos: [] };
 
-            const meta = { id: args.id, type, name, poster, description, background, genres, director, cast, country, runtime, imdbRating, videos: [] };
-
-            // --- ЛОГІКА ДЛЯ ДОДАВАННЯ ІНШИХ СЕЗОНІВ ---
-            const otherSeasons = [];
-            $('ul.seasons li a').each((index, element) => {
-                const seasonUrl = $(element).attr('href');
-                const seasonText = $(element).text().trim(); // напр. "4 сезон"
-
-                if (seasonUrl && seasonText) {
-                    const seasonPath = new URL(seasonUrl).pathname.substring(1);
-                    const seasonId = `uakino:series:${encodeURIComponent(seasonPath)}`;
-                    const seasonMatch = seasonText.match(/(\d+)/);
-                    const seasonNum = seasonMatch ? parseInt(seasonMatch[1], 10) : index + 1;
-
-                    // Створюємо спеціальний об'єкт, який буде виглядати як папка
-                    otherSeasons.push({
-                        id: seasonId,
-                        title: `📁 ${seasonText}`,
-                        season: seasonNum,
-                        episode: 0, // Використовуємо 0, щоб відрізняти від реальних серій
-                        released: new Date(0) // Ставимо дуже стару дату, щоб вони були вгорі списку
-                    });
-                }
+            const seasonPages = [];
+            seasonPages.push({ url: pageUrl, name: nameWithSeason });
+            $('ul.seasons li a').each((_, el) => {
+                seasonPages.push({ url: $(el).attr('href'), name: $(el).text().trim() });
             });
 
-            // --- Логіка парсингу серій для ПОТОЧНОГО сезону ---
-            const newsIdMatch = pageUrl.match(/(\d+)-/);
-            if (newsIdMatch && newsIdMatch[1]) {
+            console.log(`[META] Знайдено ${seasonPages.length} сезонів для серіалу "${name}". Починаємо збір серій...`);
+
+            const seasonPromises = seasonPages.map(page => axios.get(page.url, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36' } }).catch(e => null));
+            const seasonResponses = await Promise.all(seasonPromises);
+
+            const allEpisodes = [];
+            for (const [index, response] of seasonResponses.entries()) {
+                const seasonInfo = seasonPages[index];
+                if (!response) {
+                    console.warn(`[META] Не вдалося завантажити сторінку для сезону: ${seasonInfo.url}`);
+                    continue;
+                }
+
+                const $seasonPage = cheerio.load(response.data);
+                const seasonPageUrl = seasonInfo.url;
+                const newsIdMatch = seasonPageUrl.match(/(\d+)-/);
+                if (!newsIdMatch) continue;
+                const seasonPath = new URL(seasonPageUrl).pathname.substring(1);
+                const encodedSeasonPath = encodeURIComponent(seasonPath);
+
                 const newsId = newsIdMatch[1];
-                const playlistHtml = await getPlaylistHtml(newsId, pageUrl);
+                const playlistHtml = await getPlaylistHtml(newsId, $seasonPage, seasonPageUrl).catch(e => {
+                    console.error(`[META] Помилка отримання плейлиста для ${seasonPageUrl}:`, e.message);
+                    return null;
+                });
+
+                if (!playlistHtml) {
+                    continue;
+                }
+
                 const $playlist = cheerio.load(playlistHtml);
-                let currentSeason = 0;
+                const seasonMatch = seasonInfo.name.match(/(\d+)\s*сезон/i);
+                const seasonNum = seasonMatch ? parseInt(seasonMatch[1], 10) : index + 1;
 
-                // Визначаємо номер поточного сезону з заголовка h1
-                const currentSeasonMatch = nameWithSeason.match(/(\d+)\s*сезон/i);
-                currentSeason = currentSeasonMatch ? parseInt(currentSeasonMatch[1], 10) : 1;
-
-                $playlist('.playlists-items > ul > li').each((index, element) => {
-                    if ($(element).attr('data-file')) {
-                        const episodeTitle = $(element).text().trim();
+                $playlist('.playlists-items > ul > li').each((episodeIndex, el) => {
+                    if ($(el).attr('data-file')) {
+                        const episodeTitle = $(el).text().trim();
                         const episodeMatch = episodeTitle.match(/(\d+)\s*серія/i);
-                        // Якщо номер серії не знайдено, використовуємо індекс як запасний варіант
-                        const episodeNum = episodeMatch ? parseInt(episodeMatch[1], 10) : index + 1;
+                        const episodeNum = episodeMatch ? parseInt(episodeMatch[1], 10) : episodeIndex + 1;
 
-                        if (currentSeason > 0) {
-                            meta.videos.push({
-                                id: `${args.id}:${currentSeason}:${episodeNum}`,
-                                title: episodeTitle,
-                                season: currentSeason,
-                                episode: episodeNum,
-                                released: new Date()
-                            });
-                        }
+                        allEpisodes.push({
+                            id: `${args.id.split(':')[0]}:${args.id.split(':')[1]}:${encodedSeasonPath}:${seasonNum}:${episodeNum}`,
+                            title: episodeTitle,
+                            season: seasonNum,
+                            episode: episodeNum,
+                            released: new Date()
+                        });
                     }
                 });
             }
 
-            // Об'єднуємо посилання на інші сезони та серії поточного
-            // Розміщуємо інші сезони на початку списку для зручності
-            meta.videos = [...otherSeasons, ...meta.videos];
+            meta.videos = allEpisodes;
+            // Сортуємо серії для правильного відображення
+            meta.videos.sort((a, b) => a.season - b.season || a.episode - b.episode);
 
+            console.log(`[META] Успішно зібрано ${allEpisodes.length} серій для "${name}".`);
             return Promise.resolve({ meta });
+
         } catch (error) {
-            console.error(`[META] Помилка для ${pageUrl}: ${error.message}`);
+            console.error(`[META] Глобальна помилка при зборі метаданих для серіалу: ${error.message}`);
             return Promise.resolve({ meta: {} });
         }
     });
 
-    const getPlaylistHtml = async (newsId, pageUrl) => {
-        const pageResponse = await axios.get(pageUrl, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36' } });
-        const $page = cheerio.load(pageResponse.data);
+    const getPlaylistHtml = async (newsId, $page, pageUrl) => {
+        // ЗАБИРАЄМО повторний запит axios.get(pageUrl)!
+
         let dleEditTime = null;
         $page('script').each((i, el) => {
             const scriptContent = $page(el).html();
-            const match = scriptContent.match(/var dle_edittime\s*=\s*'(\d+)'/);
-            if (match && match[1]) { dleEditTime = match[1]; return false; }
+            if (scriptContent) {
+                const match = scriptContent.match(/var dle_edittime\s*=\s*'(\d+)'/);
+                if (match && match[1]) {
+                    dleEditTime = match[1];
+                    return false; // Зупиняємо цикл, бо знайшли те, що треба
+                }
+            }
         });
-        if (!dleEditTime) throw new Error('Не вдалося знайти dle_edittime на сторінці');
+
+        if (!dleEditTime) {
+            throw new Error(`Не вдалося знайти dle_edittime на сторінці ${pageUrl}`);
+        }
+
         const playlistUrl = `${UAKINO_BASE_URL}/engine/ajax/playlists.php?news_id=${newsId}&xfield=playlist&time=${dleEditTime}`;
-        const response = await axios.get(playlistUrl, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36', 'Referer': pageUrl, 'X-Requested-With': 'XMLHttpRequest' } });
+        // pageUrl тут використовується як Referer, що є важливою частиною запиту
+        const response = await axios.get(playlistUrl, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36',
+                'Referer': pageUrl,
+                'X-Requested-With': 'XMLHttpRequest'
+            }
+        });
         return response.data.response;
     };
 
@@ -346,14 +378,24 @@ async function startAddon() {
             if (!newsIdMatch) throw new Error(`Не вдалося знайти ID новини в: ${pageUrl}`);
             const newsId = newsIdMatch[1];
 
-            const playlistHtml = await getPlaylistHtml(newsId, pageUrl);
+            // --- ВИПРАВЛЕННЯ ПОЧИНАЄТЬСЯ ТУТ ---
+            // 1. Спочатку завантажуємо сторінку, щоб отримати її HTML та знайти 'dle_edittime'.
+            const pageResponse = await axios.get(pageUrl, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36' } });
+            const $page = cheerio.load(pageResponse.data);
+
+            // 2. Тепер викликаємо getPlaylistHtml з правильними аргументами.
+            const playlistHtml = await getPlaylistHtml(newsId, $page, pageUrl);
+            // --- КІНЕЦЬ ВИПРАВЛЕННЯ ---
+
             if (playlistHtml && typeof playlistHtml === 'string') {
                 const $ = cheerio.load(playlistHtml);
                 const streams = [];
-                const playerSources = [];
 
+                // ... (увесь подальший код для парсингу плеєрів та вибору найкращої якості залишається БЕЗ ЗМІН)
+                const playerSources = [];
                 let elementsToParse;
                 const idParts = args.id.split(':');
+
                 if (idParts.length > 4) { // Це ID епізоду
                     const season = idParts[3];
                     const episode = idParts[4];
@@ -387,9 +429,6 @@ async function startAddon() {
 
                 for (const player of playerSources) {
                     try {
-                        // --- НОВА ЛОГІКА ВИБОРУ НАЙКРАЩОЇ ЯКОСТІ ---
-
-                        // Змінні для зберігання найкращої якості для ПОТОЧНОГО плеєра
                         let bestStreamForPlayer = null;
                         let maxQuality = 0;
 
@@ -421,11 +460,8 @@ async function startAddon() {
                                             else qualityLabel = `${height}p`;
                                         }
                                     }
-                                    // Можна додати резервну логіку, якщо RESOLUTION відсутній
 
-                                    // Якщо знайдена якість краща за попередню найкращу...
                                     if (currentQuality > maxQuality) {
-                                        // ...оновлюємо найкращу якість і зберігаємо цей стрім як кандидат
                                         maxQuality = currentQuality;
                                         bestStreamForPlayer = {
                                             name: `UAKINO - ${player.title}`,
@@ -438,7 +474,6 @@ async function startAddon() {
                             }
                         }
 
-                        // Додаємо в загальний список ТІЛЬКИ найкращий стрім для цього плеєра
                         if (bestStreamForPlayer) {
                             streams.push(bestStreamForPlayer);
                         }
@@ -447,7 +482,6 @@ async function startAddon() {
                 }
 
                 if (streams.length > 0) {
-                    // Відсортуємо стріми, щоб найкраща якість була першою, якщо є кілька озвучок
                     streams.sort((a, b) => {
                         const qualityA = parseInt(a.title.replace(/\D/g, '')) || 0;
                         const qualityB = parseInt(b.title.replace(/\D/g, '')) || 0;
